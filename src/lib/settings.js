@@ -17,8 +17,10 @@ function update(guildId, patch) {
   cache[guildId] = { ...cache[guildId], ...patch };
   try {
     writeFileSync(FILE, JSON.stringify(cache, null, 2));
+    return true;
   } catch (err) {
     console.error('Failed to save settings:', err.message);
+    return false;
   }
 }
 
@@ -34,10 +36,67 @@ export function getDeliveryChannel(guildId) {
   return cache[guildId]?.deliveryChannel ?? null;
 }
 
+export function getDeliveryChannelForType(guildId, type) {
+  if (!guildId || !type) return getDeliveryChannel(guildId);
+  return cache[guildId]?.deliveryChannels?.[type] ?? getDeliveryChannel(guildId);
+}
+
+export function getDeliveryChannelsByType(guildId) {
+  if (!guildId) return {};
+  return { ...(cache[guildId]?.deliveryChannels ?? {}) };
+}
+
 export function setDelivery(guildId, delivery, channelId) {
   const patch = { delivery };
   if (channelId !== undefined) patch.deliveryChannel = channelId || null;
   update(guildId, patch);
+}
+
+export function setDeliveryChannelForType(guildId, type, channelId) {
+  if (!guildId || !type) return;
+  const deliveryChannels = { ...(cache[guildId]?.deliveryChannels ?? {}) };
+  if (channelId) deliveryChannels[type] = channelId;
+  else delete deliveryChannels[type];
+  update(guildId, { deliveryChannels });
+}
+
+export function getAutoGenerationConfig(guildId) {
+  if (!guildId) return {};
+  return { ...(cache[guildId]?.autoGeneration ?? {}) };
+}
+
+export function setAutoGenerationConfig(guildId, patch) {
+  if (!guildId) return;
+  update(guildId, {
+    autoGeneration: {
+      ...(cache[guildId]?.autoGeneration ?? {}),
+      ...patch,
+    },
+  });
+}
+
+export function getAutoPasswordConfig(guildId) {
+  if (!guildId) return { enabled: false, types: [], channelId: null };
+  return {
+    enabled: false,
+    types: [],
+    channelId: null,
+    ...(cache[guildId]?.autoPassword ?? {}),
+  };
+}
+
+export function setAutoPasswordConfig(guildId, patch) {
+  if (!guildId) return false;
+  return update(guildId, {
+    autoPassword: {
+      ...getAutoPasswordConfig(guildId),
+      ...patch,
+    },
+  });
+}
+
+export function getConfiguredGuildIds() {
+  return Object.keys(cache);
 }
 
 // Channel ID where generations are logged for this server (null = none set).
