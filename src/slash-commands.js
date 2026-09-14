@@ -15,7 +15,10 @@ const descriptions = {
   logs: 'Configure the generation log channel',
   history: 'View or export your generated account history',
   help: 'Show the command guide',
-  autogen: 'Open the 24-hour auto-generation panel',
+  autogen: 'Open the continuous auto-generation panel',
+  secure: 'Open a private password security action',
+  key: 'Add or manage your personal BloxGen API keys',
+  autopassword: 'Configure automatic password changes for generated accounts',
 };
 
 function base(name) {
@@ -63,6 +66,19 @@ function buildCommand(name) {
           .setDescription('Channel for channel or DM + channel delivery')
           .setRequired(false),
       );
+      command.addStringOption((option) =>
+        option
+          .setName('type')
+          .setDescription('Set a separate channel for this account type')
+          .setRequired(false)
+          .addChoices(...ACCOUNT_TYPES.map((type) => ({ name: type, value: type }))),
+      );
+      command.addChannelOption((option) =>
+        option
+          .setName('type_channel')
+          .setDescription('Channel for the selected account type')
+          .setRequired(false),
+      );
       break;
     case 'logs':
       command
@@ -86,15 +102,103 @@ function buildCommand(name) {
         );
       break;
     case 'history':
-      command.addStringOption((option) =>
-        option
-          .setName('query')
-          .setDescription('Page number, username, or "dump"')
-          .setRequired(false),
-      );
+      command
+        .addStringOption((option) =>
+          option
+            .setName('action')
+            .setDescription('View history or export an account file')
+            .setRequired(false)
+            .addChoices(
+              { name: 'View', value: 'view' },
+              { name: 'Export', value: 'export' },
+            ),
+        )
+        .addStringOption((option) =>
+          option
+            .setName('type')
+            .setDescription('Account type to export (default: all)')
+            .setRequired(false)
+            .addChoices(
+              { name: 'All types', value: 'all' },
+              ...ACCOUNT_TYPES.map((type) => ({ name: type, value: type })),
+            ),
+        )
+        .addIntegerOption((option) =>
+          option
+            .setName('page')
+            .setDescription('Only export this history page')
+            .setMinValue(1)
+            .setRequired(false),
+        )
+        .addStringOption((option) =>
+          option
+            .setName('format')
+            .setDescription('Export file format')
+            .setRequired(false)
+            .addChoices(
+              { name: 'user:pass', value: 'userpass' },
+              { name: 'user:pass:cookie', value: 'userpasscookie' },
+              { name: 'TXT', value: 'txt' },
+              { name: 'CSV', value: 'csv' },
+              { name: 'JSON', value: 'json' },
+            ),
+        )
+        .addChannelOption((option) =>
+          option
+            .setName('channel')
+            .setDescription('Optional channel where the credential export will be posted')
+            .setRequired(false),
+        );
       break;
     case 'autogen':
+    case 'autopassword':
+    case 'secure':
+      if (name === 'autopassword') {
+        command
+          .addStringOption((option) =>
+            option
+              .setName('action')
+              .setDescription('Enable, disable, or view automatic password changes')
+              .setRequired(false)
+              .addChoices(
+                { name: 'Status', value: 'status' },
+                { name: 'Enable', value: 'on' },
+                { name: 'Disable', value: 'off' },
+              ),
+          )
+          .addStringOption((option) =>
+            option
+              .setName('type')
+              .setDescription('Only change this account type (default: all)')
+              .setRequired(false)
+              .addChoices(
+                { name: 'All account types', value: 'all' },
+                ...ACCOUNT_TYPES.map((type) => ({ name: type, value: type })),
+              ),
+          )
+          .addChannelOption((option) =>
+            option
+              .setName('channel')
+              .setDescription('Optional channel for a masked password-change notice')
+              .setRequired(false),
+          );
+      }
+      if (name === 'secure') {
+        command
+          .addStringOption((option) =>
+            option.setName('account').setDescription('Generated Roblox username').setRequired(false),
+          )
+          .addStringOption((option) =>
+            option
+              .setName('type')
+              .setDescription('Show recent accounts of only this type')
+              .setRequired(false)
+              .addChoices(...ACCOUNT_TYPES.map((type) => ({ name: type, value: type }))),
+          );
+      }
+      break;
     case 'panel':
+    case 'key':
     case 'balance':
     case 'stock':
     case 'prices':
@@ -106,7 +210,7 @@ function buildCommand(name) {
       throw new Error(`No slash command definition for ${name}`);
   }
 
-  if (['settings', 'logs', 'autogen'].includes(name)) {
+  if (['settings', 'logs', 'autogen', 'autopassword'].includes(name)) {
     command.setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild);
   }
   return command;
