@@ -12,6 +12,9 @@ import logs from './logs.js';
 import history from './history.js';
 import help from './help.js';
 import autogen from './autogen.js';
+import secure from './secure.js';
+import key from './key.js';
+import autopassword from './autopassword.js';
 
 export const commandList = [
   generate,
@@ -27,6 +30,9 @@ export const commandList = [
   history,
   help,
   autogen,
+  secure,
+  key,
+  autopassword,
 ];
 
 export const commands = new Map();

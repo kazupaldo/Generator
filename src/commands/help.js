@@ -19,7 +19,9 @@ export default {
             `> **\`${p}panel\`** — open the dropdown picker`,
             `> **\`${p}balance\`** — your BloxGen balance`,
             `> **\`${p}history [page]\`** — list your generated accounts`,
-            `> **\`${p}history <username>\`** — DM that account's login · **\`${p}history dump\`** — DM all (user:pass:cookie)`,
+            `> **\`${p}history <username>\`** — DM that account's login`,
+            `> **\`${p}history export [type] [page] [format] [--channel #channel]\`** — export filtered history`,
+            '> Generated account messages include a private **🔐 Change password** button.',
           ].join('\n'),
         },
         {
@@ -39,8 +41,12 @@ export default {
           name: '⚙️ Config',
           value: [
             `> **\`${p}settings [dm|server|both] #channel\`** — DM, channel, or both *(admin)*`,
+            `> **\`${p}settings type <account type> #channel\`** — route one account type to its own channel *(admin)*`,
             `> **\`${p}logs [here|#channel|off]\`** — log generations *(admin)*`,
-            `> **\`${p}autogen\`** — enable or disable 24-hour auto-generation *(admin)*`,
+            `> **\`${p}autogen\`** — enable or disable continuous auto-generation *(admin)*`,
+            `> **\`${p}autopassword on [type] [#channel]\`** — automatically change passwords *(admin)*`,
+            `> **\`${p}secure <username>\`** — open a private password action`,
+            `> **\`${p}secure type <type>\`** — DM recent accounts of one type`,
           ].join('\n'),
         },
         {
