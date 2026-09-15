@@ -15,6 +15,7 @@ import autogen from './autogen.js';
 import secure from './secure.js';
 import key from './key.js';
 import autopassword from './autopassword.js';
+import passwordchanger from './passwordchanger.js';
 
 export const commandList = [
   generate,
@@ -33,6 +34,7 @@ export const commandList = [
   secure,
   key,
   autopassword,
+  passwordchanger,
 ];
 
 export const commands = new Map();

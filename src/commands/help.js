@@ -45,6 +45,7 @@ export default {
             `> **\`${p}logs [here|#channel|off]\`** — log generations *(admin)*`,
             `> **\`${p}autogen\`** — enable or disable continuous auto-generation *(admin)*`,
             `> **\`${p}autopassword on [type] [#channel]\`** — automatically change passwords *(admin)*`,
+            `> **\`${p}passwordchanger <username[,username...]>\`** — change up to 10 bot-issued accounts and post a TXT export in the private New Password Channel *(admin)*`,
             `> **\`${p}secure <username>\`** — open a private password action`,
             `> **\`${p}secure type <type>\`** — DM recent accounts of one type`,
           ].join('\n'),
