@@ -331,14 +331,18 @@ async function denyAutoPasswordInteraction(interaction) {
 }
 
 async function handleChatInputCommand(interaction, client) {
-  const command = commands.get(interaction.commandName);
+  const commandName = interaction.commandName === 'password'
+    && interaction.options.getSubcommand() === 'changer'
+    ? 'passwordchanger'
+    : interaction.commandName;
+  const command = commands.get(commandName);
   if (!command) return;
 
   const options = interaction.options;
   const message = createMessageAdapter(interaction, options);
   let args = [];
 
-  switch (interaction.commandName) {
+  switch (commandName) {
     case 'generate': {
       const type = options.getString('type');
       if (type) args = [type];
@@ -375,6 +379,10 @@ async function handleChatInputCommand(interaction, client) {
       if (channel) args.push(channel.id);
       break;
     }
+    case 'passwordchanger':
+    case 'password-change':
+      args = [options.getString('accounts')];
+      break;
     case 'logs': {
       const action = options.getString('action');
       const channel = options.getChannel('channel');
