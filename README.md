@@ -31,13 +31,19 @@ You can use prefix commands like `+generate alt` or native Discord slash command
 | `+settings channels` | Show every type-to-channel mapping |
 | `+settings create-channels` | Create and route the standard generated-account channels |
 | `+settings clear-type <type>` | Remove one dedicated type channel |
+| `+settings` | Open the compact Kazu Bot settings panel |
+| `+settings title <text>` | Change the embed title without editing code |
+| `+settings password-channel #channel` | Choose the successful password-change channel |
+| `+settings health-channel #channel` | Choose the persistent health-message channel |
+| `+settings export-generated` | Export generated accounts as `username:password` TXT |
+| `+settings export-new-passwords` | Export successful password changes as `username:password` TXT |
 | `+logs` | Set/clear the channel where generations are logged (admins only) |
 | `+autogen` | Open the admin-only continuous auto-generation panel |
 | `+autogen interval <seconds>` | Set the auto-generation interval while disabled |
 | `+autogen priority <type,type,...>` | Set the rotation priority while disabled |
-| `+autopassword on [type] [#channel]` | Automatically change passwords for selected types; optionally post a masked notice |
-| `+autopassword off` | Disable automatic password changes |
-| `+autopassword status` | Show automatic password-change settings |
+| `+autopassword status` | Open the compact multi-channel Auto Password panel |
+| `+autopassword on [type] [#channel]` | Enable one independent, type-routed Auto Password input channel |
+| `+autopassword off [#channel]` | Pause only the selected Auto Password channel |
 | `+key` | Add, inspect, switch, or remove personal encrypted API keys |
 | `+help` | Shows the list of commands |
 
@@ -67,11 +73,23 @@ encrypted at rest with `SESSION_SECRET`, never printed in logs, and multiple nam
 keys can be saved. Use `+key use <name>` to switch the active key. `SESSION_SECRET`
 must be configured before a key can be saved.
 
-Automatic password changes are disabled by default. A server manager can enable
-them with `+autopassword on`, limit them to one type with
-`+autopassword on alt`, and choose an optional channel for a **masked**
-password-change notice with `+autopassword on alt #password-changes`. The full
-new credentials are always sent privately to the account recipient. Generated
+Automatic password changes are disabled by default. A server manager can open
+`+autopassword status`, press **Enable**, select an input channel, and select
+one exact type: **Alts**, **30+ Days**, **1 Year+**, **5 Years+**, **Dump**, or
+**Custom**. Multiple channels can run at once; pausing, editing, or removing
+one does not affect the others. The input channel accepts either
+`username:password` lines or a `.txt` attachment. Input messages are deleted
+before account lookup, invalid lines are ignored, and credentials are never
+echoed into status messages.
+
+The bot only processes accounts returned by the authorized account-management
+system with an explicit type and session cookie. It never guesses an unknown
+type. Each channel has independent Generated, Changed, Failed, and Unknown
+counters. A password is counted as Changed only after Roblox accepts the
+mutation and the follow-up authenticated-session check succeeds. Confirmed
+results are available through the **Export Results** button as a private
+`username:new_password` TXT file. Queues, counters, channel state, and
+confirmed results are encrypted and restored after restart. Generated
 automatic passwords use the format `KazuShop` plus digit-letter-digit-letter,
 for example `KazuShop8H3G`.
 
