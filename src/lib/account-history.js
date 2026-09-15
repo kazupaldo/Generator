@@ -92,6 +92,7 @@ export function recordPasswordChange(account, timestamp = new Date().toISOString
     username,
     password: String(account.password),
     combo: `${username}:${account.password}`,
+    type: account.type ?? null,
     timestamp,
   }));
   save();
