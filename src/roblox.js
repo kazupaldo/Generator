@@ -45,7 +45,35 @@ export async function changePassword({ cookie, currentPassword, newPassword }) {
   });
 
   if (!res.ok) throw new Error(await readError(res));
-  return true;
+  // Some Roblox responses are HTTP 200 even when the JSON body contains an
+  // application-level error. Treat that as a failed mutation.
+  try {
+    const data = await res.clone().json();
+    if (Array.isArray(data?.errors) && data.errors.length) {
+      throw new Error(data.errors[0]?.message || 'Roblox rejected the password change.');
+    }
+    if (data?.success === false) {
+      throw new Error(data.message || 'Roblox rejected the password change.');
+    }
+  } catch (error) {
+    if (error.message?.includes('Roblox rejected')) throw error;
+    // Empty response bodies are valid for this endpoint.
+  }
+  return { confirmed: true };
+}
+
+// Confirm that Roblox still recognizes the authenticated account after the
+// mutation. This is intentionally a session check, not a password guess.
+export async function verifyPasswordChange(cookie) {
+  if (!cookie) return false;
+  try {
+    const res = await fetch('https://users.roblox.com/v1/users/authenticated', {
+      headers: { Cookie: cookieHeader(cookie) },
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 // GET https://voice.roblox.com/v1/settings -> voice chat status for the account.

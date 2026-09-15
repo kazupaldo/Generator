@@ -6,6 +6,8 @@ import * as interactionCreate from './events/interactionCreate.js';
 import { registerSlashCommands } from './slash-commands.js';
 import { restoreAutoGenerationRuns } from './lib/auto-generation.js';
 import { drainDeliveryQueue } from './lib/delivery-queue.js';
+import { updateHealthMessage } from './lib/health.js';
+import { restoreAutoPasswordQueues } from './lib/auto-password.js';
 
 if (!DISCORD_TOKEN) {
   console.error('Missing DISCORD_TOKEN. Copy .env.example to .env and fill the bot token.');
@@ -34,7 +36,16 @@ client.once('clientReady', async (c) => {
     }
   }
   await restoreAutoGenerationRuns(c);
+  await restoreAutoPasswordQueues(c);
   setInterval(() => drainDeliveryQueue(c), 10_000).unref?.();
+  const refreshHealth = async () => {
+    for (const guild of c.guilds.cache.values()) {
+      await updateHealthMessage(c, guild.id, {
+      });
+    }
+  };
+  await refreshHealth();
+  setInterval(refreshHealth, 60_000).unref?.();
 });
 
 client.on('guildCreate', async (guild) => {
