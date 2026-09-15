@@ -1,6 +1,6 @@
-# 🤖 BloxGen Discord Bot
+# 🤖 Kazu Bot — Roblox Account Manager
 
-A simple Discord bot that lets you generate Roblox accounts through the [BloxGen API](https://docs.bloxgen.net), right from your Discord server.
+Kazu Bot is a Discord account-management bot built around the [BloxGen API](https://docs.bloxgen.net). It handles account generation, private delivery, account history, and authorized password changes from one server.
 
 You can use prefix commands like `+generate alt` or native Discord slash commands like `/generate`.
 
@@ -22,6 +22,9 @@ You can use prefix commands like `+generate alt` or native Discord slash command
 | `+history export [type] [page] [format]` | DMs filtered history as `txt`, `csv`, or `json` |
 | `+secure <username>` | Opens a private password security action for a generated account |
 | `+secure type <type>` | DMs up to five recent accounts of one type with manual security actions |
+| `+passwordchanger <username[,username...]>` | Changes up to 10 accounts already recorded in this bot's encrypted history; the TXT export is posted in the configured private New Password Channel |
+| `+password-change <username[,username...]>` | Alias for `+passwordchanger` |
+| `+passwordchanger type <alts|30d|1y|5y|dump|18plus>` | Changes up to 10 bot-issued accounts matching one type |
 | `+followers <id>` | Checks how many followers can be added to a Roblox account |
 | `+stock` | Live-checks which account types are currently in stock |
 | `+prices` | Shows the price of each account type |
@@ -54,9 +57,40 @@ You can use prefix commands like `+generate alt` or native Discord slash command
 The primary commands are also registered as native Discord slash commands:
 `/generate`, `/panel`, `/balance`, `/followers`, `/stock`, `/prices`,
 `/limits`, `/status`, `/settings`, `/logs`, `/history`, `/secure`, `/help`,
-`/autogen`, `/autopassword`, and `/key`.
+`/autogen`, `/autopassword`, `/passwordchanger`, `/password-change`,
+`/password changer`, and `/key`.
 They are registered for each server when the bot starts or joins it. Prefix
 commands remain available for compatibility.
+
+### Password Changer command names
+
+Use any of these supported forms:
+
+```text
+/password changer accounts:Username1,Username2
+/passwordchanger accounts:Username1,Username2
+/password-change accounts:Username1,Username2
++passwordchanger type alts
++passwordchanger type 30d
++passwordchanger Username1 Username2
++password-change Username1 Username2
+```
+
+Discord does not allow spaces inside a single slash-command name, so
+`/password changer` is implemented as the `password` command with the
+`changer` subcommand. All forms are admin-only and process only usernames
+already recorded in the bot's encrypted account history.
+
+For slash type filtering, use for example:
+
+```text
+/password changer type:Alts
+/password changer type:30+ Days
+/passwordchanger type:1y
+```
+
+Supported filters are **Alts**, **30+ Days**, **1 Year+**, **5 Years+**,
+**Dump**, and **18+ Age Verified**. Type filtering stops at 10 matches per run.
 
 `+stock` and `/stock` call the BloxGen stock endpoint when used. The response
 also includes a **Refresh live stock** button. Every generation performs a
@@ -92,6 +126,14 @@ results are available through the **Export Results** button as a private
 confirmed results are encrypted and restored after restart. Generated
 automatic passwords use the format `KazuShop` plus digit-letter-digit-letter,
 for example `KazuShop8H3G`.
+
+The separate `+passwordchanger` command is intentionally narrower: it accepts
+generated usernames only, never raw `user:pass` values, cookies, or TXT
+uploads. It verifies that each username is already in this bot's encrypted
+generated or changed history, processes at most 10 accounts sequentially, and
+reports only counts and masked status in the progress embed. One
+`username:new_password` TXT export is posted to the configured New Password
+Channel after the batch completes. Password Changer does not send DMs.
 
 History exports are manager-only. Use
 `+history export user:pass --channel #private-export` or the `/history` export
