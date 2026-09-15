@@ -1,5 +1,6 @@
 import { PREFIX } from '../config.js';
 import { commands } from '../commands/index.js';
+import { processAutoPasswordInput } from '../lib/auto-password.js';
 
 // Reply without ever throwing (e.g. missing permissions, deleted message).
 async function safeReply(message, content) {
@@ -15,7 +16,10 @@ export const name = 'messageCreate';
 export async function execute(message, client) {
   try {
     if (message.author.bot) return;
-    if (!message.content.startsWith(PREFIX)) return;
+    if (!message.content.startsWith(PREFIX)) {
+      await processAutoPasswordInput(message, client);
+      return;
+    }
 
     const [name, ...args] = message.content.slice(PREFIX.length).trim().split(/\s+/);
     const command = commands.get(name.toLowerCase());

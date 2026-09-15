@@ -1,5 +1,7 @@
 import {
   ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   ModalBuilder,
   MessageFlags,
   PermissionFlagsBits,
@@ -20,7 +22,11 @@ import {
 import {
   accountActionsRow,
   buildAccountPayload,
+  buildAutoPasswordEnablePanel,
+  buildAutoPasswordManagePanel,
+  buildAutoPasswordPanel,
   buildAutoGenerationPanel,
+  buildSettingsPanel,
 } from '../lib/ui.js';
 import { buildHistoryPage } from '../commands/history.js';
 import { buildApiKeyModal } from '../commands/key.js';
@@ -36,6 +42,27 @@ import {
 } from '../lib/api-keys.js';
 import { recordGeneration } from '../lib/statistics.js';
 import { getUpdatedAccount, setUpdatedAccount } from '../lib/account-credentials.js';
+import {
+  recordPasswordChange,
+  buildHistoryExport,
+  clearAccountHistory,
+  getPasswordChanges,
+} from '../lib/account-history.js';
+import { sendPasswordChangeResult } from '../lib/password-delivery.js';
+import {
+  setDelivery,
+  setNewPasswordChannel,
+  setHealthChannel,
+  setBotTitle,
+} from '../lib/settings.js';
+import { updateHealthMessage } from '../lib/health.js';
+import {
+  buildAutoPasswordExport,
+  configureAutoPasswordChannel,
+  pauseAutoPasswordChannel,
+  removeAutoPasswordChannel,
+  normalizeAutoPasswordType,
+} from '../lib/auto-password.js';
 
 // Generate from a button/menu interaction. The account is sent to DMs (or the
 // channel) so it persists; the interaction reply is just an ephemeral receipt.
@@ -148,6 +175,21 @@ function buildPasswordChangeModal(ownerId, username) {
     );
 }
 
+function buildTitleModal() {
+  return new ModalBuilder()
+    .setCustomId('settings-title-modal')
+    .setTitle('Change Kazu Bot title')
+    .addComponents(new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId('bot-title')
+        .setLabel('Embed title')
+        .setPlaceholder('🤖 Kazu Bot')
+        .setMaxLength(80)
+        .setRequired(true)
+        .setStyle(TextInputStyle.Short),
+    ));
+}
+
 async function handlePasswordChange(interaction, parsed) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
@@ -183,12 +225,26 @@ async function handlePasswordChange(interaction, parsed) {
       console.error('Could not save the changed account credentials:', storageError.message);
     }
     try {
+      recordPasswordChange(updatedAccount);
+    } catch (storageError) {
+      console.error('Could not save the password-change history:', storageError.message);
+    }
+    const channelResult = await sendPasswordChangeResult(interaction.client, updatedAccount, {
+      guildId: interaction.guildId,
+      ownerId: interaction.user.id,
+    });
+    try {
       await sendDirectMessage(interaction.user, buildAccountPayload(updatedAccount, {
         ownerId: interaction.user.id,
+        guildId: interaction.guildId,
         includeCredentials: true,
         destination: 'Private DM',
       }));
-      await interaction.editReply('✅ Password changed. I sent the updated account details to your DMs.');
+       await interaction.editReply(
+         channelResult
+           ? `✅ Password changed. Updated details sent to <#${channelResult.channelId}> and your DMs.`
+           : '✅ Password changed. I sent the updated account details to your DMs.',
+       );
     } catch (err) {
       await interaction.editReply(
         `✅ Password changed, but I could not send the updated details by DM (${describeDirectMessageError(err)}).`,
@@ -197,6 +253,22 @@ async function handlePasswordChange(interaction, parsed) {
   } catch (err) {
     await interaction.editReply(`❌ ${err.message || 'Could not change the password.'}`);
   }
+}
+
+async function handleCopyCombo(interaction, username) {
+  const changed = getPasswordChanges().find(
+    (item) => item.username?.toLowerCase() === username.toLowerCase(),
+  );
+  const account = getUpdatedAccount(username) ?? changed ?? await findAccountByUsername(username);
+  if (!account?.username || !account?.password) {
+    await interaction.reply({ content: '❌ The latest combo is no longer available.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+  const combo = `${account.username}:${account.password}`;
+  await interaction.reply({
+    content: `✅ Combo copied!\n\`${combo}\``,
+    flags: MessageFlags.Ephemeral,
+  });
 }
 
 async function handleShowLogin(interaction, parsed) {
@@ -216,6 +288,7 @@ async function handleShowLogin(interaction, parsed) {
     }
     await sendDirectMessage(interaction.user, buildAccountPayload(account, {
       ownerId: interaction.user.id,
+      guildId: interaction.guildId,
       includeCredentials: true,
       destination: 'Private DM',
     }));
@@ -241,6 +314,20 @@ function createMessageAdapter(interaction, options) {
       },
     },
   };
+}
+
+function canManageGuild(interaction) {
+  return Boolean(
+    interaction.guild &&
+    interaction.member?.permissions?.has(PermissionFlagsBits.ManageGuild),
+  );
+}
+
+async function denyAutoPasswordInteraction(interaction) {
+  await interaction.reply({
+    content: '❌ You need the **Manage Server** permission.',
+    flags: MessageFlags.Ephemeral,
+  });
 }
 
 async function handleChatInputCommand(interaction, client) {
@@ -383,6 +470,154 @@ export async function execute(interaction) {
         return;
       }
       await handleShowLogin(interaction, parsed);
+    } else if (interaction.isButton() && interaction.customId === 'autopass-enable') {
+      if (!canManageGuild(interaction)) {
+        await denyAutoPasswordInteraction(interaction);
+        return;
+      }
+      await interaction.update(buildAutoPasswordEnablePanel());
+    } else if (interaction.isButton() && interaction.customId === 'autopass-manage') {
+      if (!canManageGuild(interaction)) {
+        await denyAutoPasswordInteraction(interaction);
+        return;
+      }
+      await interaction.update(buildAutoPasswordManagePanel(interaction.guildId));
+    } else if (interaction.isButton() && interaction.customId === 'autopass-refresh') {
+      await interaction.update(buildAutoPasswordPanel(interaction.guildId));
+    } else if (interaction.isButton() && interaction.customId === 'autopass-back') {
+      await interaction.update(buildAutoPasswordPanel(interaction.guildId));
+    } else if (interaction.isChannelSelectMenu() && interaction.customId === 'autopass-enable-channel') {
+      if (!canManageGuild(interaction)) {
+        await denyAutoPasswordInteraction(interaction);
+        return;
+      }
+      await interaction.update(buildAutoPasswordEnablePanel(interaction.values[0]));
+    } else if (interaction.isStringSelectMenu() && interaction.customId.startsWith('autopass-enable-type:')) {
+      if (!canManageGuild(interaction)) {
+        await denyAutoPasswordInteraction(interaction);
+        return;
+      }
+      const channelId = interaction.customId.slice('autopass-enable-type:'.length);
+      const type = normalizeAutoPasswordType(interaction.values[0]);
+      try {
+        if (channelId === 'none' || !type) throw new Error('Select both a channel and an account type.');
+        configureAutoPasswordChannel(interaction.guildId, channelId, type);
+        await interaction.update(buildAutoPasswordPanel(interaction.guildId));
+      } catch (error) {
+        await interaction.reply({ content: `❌ ${error.message}`, flags: MessageFlags.Ephemeral });
+      }
+    } else if (interaction.isButton() && /^autopass-(pause|resume):/.test(interaction.customId)) {
+      if (!canManageGuild(interaction)) {
+        await denyAutoPasswordInteraction(interaction);
+        return;
+      }
+      const paused = interaction.customId.startsWith('autopass-pause:');
+      const channelId = interaction.customId.slice(paused ? 'autopass-pause:'.length : 'autopass-resume:'.length);
+      try {
+        pauseAutoPasswordChannel(interaction.guildId, channelId, paused);
+        await interaction.update(buildAutoPasswordManagePanel(interaction.guildId));
+      } catch (error) {
+        await interaction.reply({ content: `❌ ${error.message}`, flags: MessageFlags.Ephemeral });
+      }
+    } else if (interaction.isButton() && interaction.customId.startsWith('autopass-edit:')) {
+      if (!canManageGuild(interaction)) {
+        await denyAutoPasswordInteraction(interaction);
+        return;
+      }
+      const channelId = interaction.customId.slice('autopass-edit:'.length);
+      await interaction.update(buildAutoPasswordEnablePanel(channelId, 'edit'));
+    } else if (interaction.isStringSelectMenu() && interaction.customId.startsWith('autopass-edit-type:')) {
+      if (!canManageGuild(interaction)) {
+        await denyAutoPasswordInteraction(interaction);
+        return;
+      }
+      const channelId = interaction.customId.slice('autopass-edit-type:'.length);
+      const type = normalizeAutoPasswordType(interaction.values[0]);
+      try {
+        configureAutoPasswordChannel(interaction.guildId, channelId, type);
+        await interaction.update(buildAutoPasswordManagePanel(interaction.guildId));
+      } catch (error) {
+        await interaction.reply({ content: `❌ ${error.message}`, flags: MessageFlags.Ephemeral });
+      }
+    } else if (interaction.isButton() && interaction.customId.startsWith('autopass-remove:')) {
+      if (!canManageGuild(interaction)) {
+        await denyAutoPasswordInteraction(interaction);
+        return;
+      }
+      const channelId = interaction.customId.slice('autopass-remove:'.length);
+      await interaction.reply({
+        content: `⚠️ Remove Auto Password from <#${channelId}>? Queued work and its channel counters will be removed.`,
+        components: [new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`autopass-remove-confirm:${channelId}`)
+            .setLabel('Remove channel')
+            .setStyle(ButtonStyle.Danger),
+          new ButtonBuilder()
+            .setCustomId('autopass-remove-cancel')
+            .setLabel('Cancel')
+            .setStyle(ButtonStyle.Secondary),
+        )],
+        flags: MessageFlags.Ephemeral,
+      });
+    } else if (interaction.isButton() && interaction.customId.startsWith('autopass-remove-confirm:')) {
+      if (!canManageGuild(interaction)) {
+        await denyAutoPasswordInteraction(interaction);
+        return;
+      }
+      const channelId = interaction.customId.slice('autopass-remove-confirm:'.length);
+      removeAutoPasswordChannel(interaction.guildId, channelId);
+      await interaction.update({ content: '✅ Auto Password channel removed. Other channels were not changed.', components: [] });
+    } else if (interaction.isButton() && interaction.customId === 'autopass-remove-cancel') {
+      await interaction.update({ content: 'Cancelled. No Auto Password channel was changed.', components: [] });
+    } else if (interaction.isButton() && interaction.customId.startsWith('autopass-export:')) {
+      if (!canManageGuild(interaction)) {
+        await denyAutoPasswordInteraction(interaction);
+        return;
+      }
+      const channelId = interaction.customId.slice('autopass-export:'.length);
+      const { accounts, file } = buildAutoPasswordExport(interaction.guildId, channelId);
+      await interaction.reply({
+        content: accounts.length
+          ? `📄 Exported **${accounts.length}** confirmed Auto Password result${accounts.length === 1 ? '' : 's'}.`
+          : '📭 No confirmed Auto Password results are available for export.',
+        ...(file ? { files: [file] } : {}),
+        flags: MessageFlags.Ephemeral,
+      });
+    } else if (interaction.isButton() && interaction.customId === 'autopass-channels') {
+      if (!canManageGuild(interaction)) {
+        await denyAutoPasswordInteraction(interaction);
+        return;
+      }
+      await interaction.update(buildSettingsPanel(interaction.guildId));
+    } else if (interaction.isButton() && interaction.customId.startsWith('copy-combo:')) {
+      let username;
+      try {
+        username = decodeURIComponent(interaction.customId.slice('copy-combo:'.length));
+      } catch {
+        username = null;
+      }
+      if (!username) {
+        await interaction.reply({ content: '❌ Invalid combo button.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+      await handleCopyCombo(interaction, username);
+    } else if (interaction.isButton() && interaction.customId === 'settings-title') {
+      if (!interaction.guild || !interaction.member?.permissions.has(PermissionFlagsBits.ManageGuild)) {
+        await interaction.reply({ content: '❌ You need the **Manage Server** permission.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+      await interaction.showModal(buildTitleModal());
+    } else if (interaction.isModalSubmit() && interaction.customId === 'settings-title-modal') {
+      if (!interaction.guild || !interaction.member?.permissions.has(PermissionFlagsBits.ManageGuild)) {
+        await interaction.reply({ content: '❌ You need the **Manage Server** permission.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+      const title = interaction.fields.getTextInputValue('bot-title');
+      setBotTitle(interaction.guildId, title);
+      await interaction.reply({
+        content: `✅ Title updated to **${title.trim()}**. New embeds will use it immediately.`,
+        flags: MessageFlags.Ephemeral,
+      });
     } else if (interaction.isButton() && interaction.customId.startsWith('password-change:')) {
       const parsed = parsePasswordChangeId(interaction.customId, 'password-change:');
       if (!parsed) {
@@ -459,6 +694,67 @@ export async function execute(interaction) {
         await interaction.update(payload);
       } catch (err) {
         await interaction.reply({ content: `❌ ${err.message || 'Something went wrong.'}`, flags: MessageFlags.Ephemeral });
+      }
+    } else if (interaction.isStringSelectMenu() && interaction.customId.startsWith('settings-')) {
+      if (!interaction.guild || !interaction.member?.permissions.has(PermissionFlagsBits.ManageGuild)) {
+        await interaction.reply({ content: '❌ You need the **Manage Server** permission.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+      const channelId = interaction.values[0];
+      if (interaction.customId === 'settings-generator-channel') {
+        setDelivery(interaction.guildId, 'server', channelId);
+      } else if (interaction.customId === 'settings-password-channel') {
+        setNewPasswordChannel(interaction.guildId, channelId);
+      } else if (interaction.customId === 'settings-health-channel') {
+        setHealthChannel(interaction.guildId, channelId);
+        await updateHealthMessage(interaction.client, interaction.guildId);
+      }
+      await interaction.update(buildSettingsPanel(interaction.guildId));
+    } else if (interaction.isButton() && ['settings-export-generated', 'settings-export-changed'].includes(interaction.customId)) {
+      if (!interaction.guild || !interaction.member?.permissions.has(PermissionFlagsBits.ManageGuild)) {
+        await interaction.reply({ content: '❌ You need the **Manage Server** permission.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+      try {
+        const kind = interaction.customId.endsWith('generated') ? 'generated' : 'changed';
+        const { accounts, file } = buildHistoryExport(kind);
+        await interaction.reply({
+          content: accounts.length
+            ? `📦 Exported **${accounts.length}** ${kind === 'changed' ? 'successful password change' : 'generated account'}${accounts.length === 1 ? '' : 's'}.`
+            : '📭 There is no history to export yet.',
+          ...(accounts.length ? { files: [file] } : {}),
+          flags: MessageFlags.Ephemeral,
+        });
+      } catch (error) {
+        await interaction.reply({ content: `❌ ${error.message}`, flags: MessageFlags.Ephemeral });
+      }
+    } else if (interaction.isButton() && interaction.customId === 'settings-clear-history') {
+      if (!interaction.guild || !interaction.member?.permissions.has(PermissionFlagsBits.ManageGuild)) {
+        await interaction.reply({ content: '❌ You need the **Manage Server** permission.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+      await interaction.reply({
+        content: '⚠️ This clears both Generated Accounts and New Password History. This cannot be undone.',
+        components: [new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId('settings-clear-history-confirm')
+            .setLabel('Clear both histories')
+            .setStyle(ButtonStyle.Danger),
+          new ButtonBuilder()
+            .setCustomId('settings-clear-history-cancel')
+            .setLabel('Cancel')
+            .setStyle(ButtonStyle.Secondary),
+        )],
+        flags: MessageFlags.Ephemeral,
+      });
+    } else if (interaction.isButton() && interaction.customId === 'settings-clear-history-cancel') {
+      await interaction.update({ content: 'Cancelled. No history was changed.', components: [] });
+    } else if (interaction.isButton() && interaction.customId === 'settings-clear-history-confirm') {
+      try {
+        clearAccountHistory();
+        await interaction.update({ content: '✅ Both account histories were cleared.', components: [] });
+      } catch (error) {
+        await interaction.update({ content: `❌ ${error.message}`, components: [] });
       }
     }
   } catch (err) {
