@@ -1,13 +1,17 @@
 import { PermissionFlagsBits } from 'discord.js';
-import { ACCOUNT_TYPES } from '../bloxgen.js';
 import { PREFIX } from '../config.js';
 import {
-  getAutoPasswordConfig,
-  setAutoPasswordConfig,
-} from '../lib/settings.js';
-import { getApiKeyStorageStatus } from '../lib/api-keys.js';
+  AUTO_PASSWORD_TYPES,
+  configureAutoPasswordChannel,
+  getAutoPasswordChannels,
+  getAutoPasswordTypeLabel,
+  normalizeAutoPasswordType,
+  pauseAutoPasswordChannel,
+  removeAutoPasswordChannel,
+} from '../lib/auto-password.js';
+import { buildAutoPasswordEnablePanel, buildAutoPasswordPanel } from '../lib/ui.js';
 
-function getChannel(message, args) {
+function getChannel(message, args = []) {
   const mentioned = message.mentions?.channels?.first?.();
   if (mentioned) return mentioned;
   const rawId = args
@@ -16,27 +20,18 @@ function getChannel(message, args) {
   return rawId ? message.guild.channels.cache.get(rawId) : null;
 }
 
-function parseType(args, channel) {
-  const remaining = args
+function getType(args, channel) {
+  const raw = args
     .filter((value) => value !== channel?.id && !/^<#\d+>$/.test(value))
     .join(' ')
     .trim();
-  if (!remaining || remaining.toLowerCase() === 'all') return [];
-  const match = ACCOUNT_TYPES.find((type) => type.toLowerCase() === remaining.toLowerCase());
-  return match ? [match] : null;
+  return normalizeAutoPasswordType(raw);
 }
 
-function statusText(guildId) {
-  const config = getAutoPasswordConfig(guildId);
-  if (!config.enabled) {
-    return `🔐 Automatic password changes are **disabled**.\nEnable with \`${PREFIX}autopassword on\`.`;
-  }
-  const scope = config.types?.length ? config.types.join(', ') : 'all account types';
-  const channel = config.channelId ? `<#${config.channelId}>` : 'no extra notice channel';
-  return `🔐 Automatic password changes are **enabled** for **${scope}**.\n` +
-    'Password format: `KazuShop` + digit + uppercase letter + digit + uppercase letter (example: `KazuShop8H3G`).\n' +
-    `Password-change notice channel: ${channel}\n` +
-    'The full new username and password are sent privately; the optional channel receives only a masked notice.';
+function findConfiguredChannel(message, args) {
+  const channel = getChannel(message, args);
+  return channel || getAutoPasswordChannels(message.guildId)
+    .find((item) => args.includes(item.channelId));
 }
 
 export default {
@@ -45,45 +40,50 @@ export default {
   execute({ message, args }) {
     if (!message.guild) return 'This command can only be used in a server.';
     if (!message.member?.permissions.has(PermissionFlagsBits.ManageGuild)) {
-      return '❌ You need the **Manage Server** permission to configure automatic password changes.';
+      return '❌ You need the **Manage Server** permission to configure Auto Password.';
     }
 
     const action = (args[0] || 'status').toLowerCase();
-    if (action === 'status') return statusText(message.guildId);
+    if (action === 'status' || action === 'panel') return buildAutoPasswordPanel(message.guildId);
+    if (action === 'enable' && !args.slice(1).length) return buildAutoPasswordEnablePanel();
+
+    if (['on', 'enable'].includes(action)) {
+      const channel = getChannel(message, args.slice(1));
+      const type = getType(args.slice(1), channel);
+      if (!channel) return '❌ Select an Auto Password input channel.';
+      if (!channel.isTextBased?.()) return '❌ The Auto Password channel must be a text channel.';
+      if (!type) {
+        return `❌ Select one exact account type: ${AUTO_PASSWORD_TYPES
+          .map((item) => `\`${item.label}\``).join(', ')}.`;
+      }
+      try {
+        configureAutoPasswordChannel(message.guildId, channel.id, type);
+        return `✅ Auto Password enabled\nChannel: <#${channel.id}>\nType: ${getAutoPasswordTypeLabel(type)}`;
+      } catch (error) {
+        return `❌ ${error.message}`;
+      }
+    }
 
     if (action === 'off' || action === 'disable') {
-      if (!setAutoPasswordConfig(message.guildId, { enabled: false })) {
-        return '❌ I could not save the automatic password settings. Check that the bot can write to its project folder.';
+      const target = findConfiguredChannel(message, args.slice(1));
+      if (!target?.channelId) {
+        return '❌ Specify the channel to disable so other Auto Password channels remain unchanged.';
       }
-      return '✅ Automatic password changes are disabled.';
+      try {
+        pauseAutoPasswordChannel(message.guildId, target.channelId, true);
+        return `⏸️ Auto Password paused for <#${target.channelId}>. Queued work is saved.`;
+      } catch (error) {
+        return `❌ ${error.message}`;
+      }
     }
 
-    if (!['on', 'enable'].includes(action)) {
-      return `❌ Use \`${PREFIX}autopassword on [type] [#channel]\`, \`${PREFIX}autopassword off\`, or \`${PREFIX}autopassword status\`.`;
+    if (action === 'remove') {
+      const target = findConfiguredChannel(message, args.slice(1));
+      if (!target?.channelId) return '❌ Specify the channel to remove.';
+      removeAutoPasswordChannel(message.guildId, target.channelId);
+      return `✅ Auto Password removed for <#${target.channelId}>. Other channels were not changed.`;
     }
 
-    if (!getApiKeyStorageStatus().ready) {
-      return '❌ Configure `SESSION_SECRET` first. It is required to store the new passwords securely.';
-    }
-
-    const channel = getChannel(message, args.slice(1));
-    const types = parseType(args.slice(1), channel);
-    if (types === null) {
-      return `❌ Invalid account type. Available: ${ACCOUNT_TYPES.map((type) => `\`${type}\``).join(', ')}, or \`all\`.`;
-    }
-
-    if (channel && !channel.isTextBased?.()) {
-      return '❌ The notice destination must be a text channel.';
-    }
-
-    if (!setAutoPasswordConfig(message.guildId, {
-      enabled: true,
-      types,
-      channelId: channel?.id ?? null,
-    })) {
-      return '❌ I could not save the automatic password settings. Check that the bot can write to its project folder.';
-    }
-    return `✅ Automatic password changes enabled for **${types.length ? types.join(', ') : 'all account types'}**.\n` +
-      `Full new credentials will be sent privately${channel ? `; <#${channel.id}> receives a masked notice` : ''}.`;
+    return `❌ Use \`${PREFIX}autopassword status\`, \`${PREFIX}autopassword on [type] [#channel]\`, or \`${PREFIX}autopassword off [#channel]\`.`;
   },
 };

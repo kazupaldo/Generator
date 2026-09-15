@@ -88,6 +88,7 @@ async function sendAccountDM(user, username, message) {
   try {
     await sendDirectMessage(user, buildAccountPayload(acc, {
       ownerId: user.id,
+      guildId: message.guildId,
       voice,
       includeCredentials: true,
       destination: 'Private DM',

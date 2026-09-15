@@ -1,12 +1,18 @@
 import { ChannelType, PermissionFlagsBits } from 'discord.js';
 import { PREFIX } from '../config.js';
 import { ACCOUNT_TYPES } from '../bloxgen.js';
+import { buildSettingsPanel } from '../lib/ui.js';
+import { buildHistoryExport } from '../lib/account-history.js';
 import {
   getDelivery,
   getDeliveryChannel,
   getDeliveryChannelsByType,
   setDelivery,
   setDeliveryChannelForType,
+  setNewPasswordChannel,
+  setHealthChannel,
+  getBotTitle,
+  setBotTitle,
 } from '../lib/settings.js';
 
 export default {
@@ -21,6 +27,54 @@ export default {
 
     const choice = (args[0] || '').toLowerCase();
     if (!choice) {
+      return buildSettingsPanel(message.guildId);
+    }
+    if (!message.member?.permissions.has(PermissionFlagsBits.ManageGuild)) {
+      return '❌ You need the **Manage Server** permission to change this.';
+    }
+    if (choice === 'title') {
+      if (!args.slice(1).join(' ').trim()) {
+        return `Current title: **${getBotTitle(message.guildId)}**. Use \`${PREFIX}settings title <text>\`.`;
+      }
+      setBotTitle(message.guildId, args.slice(1).join(' '));
+      return `✅ Bot title updated to **${getBotTitle(message.guildId)}**.`;
+    }
+    if (choice === 'password-channel' || choice === 'new-password') {
+      const channel = message.mentions?.channels?.first?.() ||
+        (args[1] && message.guild.channels.cache.get(args[1]));
+      if (!channel?.isTextBased?.()) return `❌ Select a text channel: \`${PREFIX}settings password-channel #channel\`.`;
+      setNewPasswordChannel(message.guildId, channel.id);
+      return `✅ Successful password changes will be posted in <#${channel.id}>.`;
+    }
+    if (choice === 'health-channel' || choice === 'health') {
+      const channel = message.mentions?.channels?.first?.() ||
+        (args[1] && message.guild.channels.cache.get(args[1]));
+      if (!channel?.isTextBased?.()) return `❌ Select a text channel: \`${PREFIX}settings health-channel #channel\`.`;
+      setHealthChannel(message.guildId, channel.id);
+      return `✅ Health updates will be maintained in <#${channel.id}>.`;
+    }
+    if (choice === 'generator-channel') {
+      const channel = message.mentions?.channels?.first?.() ||
+        (args[1] && message.guild.channels.cache.get(args[1]));
+      if (!channel?.isTextBased?.()) return `❌ Select a text channel: \`${PREFIX}settings generator-channel #channel\`.`;
+      setDelivery(message.guildId, 'server', channel.id);
+      return `✅ Generated accounts will be posted in <#${channel.id}>.`;
+    }
+    if (choice === 'export-generated' || choice === 'export-new-passwords' || choice === 'export-changed') {
+      const kind = choice === 'export-generated' ? 'generated' : 'changed';
+      try {
+        const { accounts, file } = buildHistoryExport(kind);
+        return {
+          content: accounts.length
+            ? `📦 Exported **${accounts.length}** ${kind === 'changed' ? 'successful password change' : 'generated account'}${accounts.length === 1 ? '' : 's'}.`
+            : '📭 There is no history to export yet.',
+          ...(accounts.length ? { files: [file] } : {}),
+        };
+      } catch (error) {
+        return `❌ ${error.message}`;
+      }
+    }
+    if (choice === 'show') {
       const channelText = currentChannel ? `\nDelivery channel: <#${currentChannel}>` : '';
       const typeChannels = getDeliveryChannelsByType(message.guildId);
       const typeText = Object.entries(typeChannels).length
@@ -28,11 +82,6 @@ export default {
         : '';
       return `Account delivery is currently set to **${current}**.${channelText}${typeText}\n` +
         `Use \`${PREFIX}settings dm\`, \`${PREFIX}settings server #channel\`, \`${PREFIX}settings both #channel\`, \`${PREFIX}settings type <account type> #channel\`, or \`${PREFIX}settings channels\`.`;
-    }
-
-    // Only server managers can change delivery (server mode exposes credentials publicly).
-    if (!message.member?.permissions.has(PermissionFlagsBits.ManageGuild)) {
-      return '❌ You need the **Manage Server** permission to change this.';
     }
 
     if (choice === 'channels') {
