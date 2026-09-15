@@ -17,6 +17,7 @@ import { requireUserApiKey } from './api-keys.js';
 import { recordGeneration } from './statistics.js';
 import { drainDeliveryQueue, getPendingDeliveryCount } from './delivery-queue.js';
 import { buildAutoGenerationPanel } from './ui.js';
+import { updateHealthMessage } from './health.js';
 
 export const AUTO_GENERATION_INTERVAL_MS = 5 * 1000;
 export const AUTO_PANEL_REFRESH_INTERVAL_MS = 15 * 1000;
@@ -223,6 +224,44 @@ async function deliverGeneratedAccount(client, run, payload, user, type) {
   });
 }
 
+async function deliverDeferredGeneratedAccount(client, run, payload, user, type) {
+  let finalPayload;
+  try {
+    finalPayload = await payload.finalizedPromise;
+  } catch (error) {
+    run.lastError = `Could not finish password change for ${payload.account?.username || 'the account'}: ${error.message}`;
+    run.waitingReason = run.lastError;
+    console.error(`Auto-password finalization failed for guild ${run.guildId}:`, error.message);
+    refreshPanel(run, true);
+    return;
+  }
+
+  try {
+    const delivery = await deliverGeneratedAccount(client, run, finalPayload, user, type);
+    recordGeneration(
+      run.guildId,
+      type,
+      delivery.channelSent || delivery.dmSent ? 'successful' : 'failed',
+      delivery.channelSent ? delivery.channelId : null,
+    );
+    if (delivery.channelError || delivery.dmError) {
+      run.waitingReason = 'A delivery destination failed; retrying from the durable queue.';
+    }
+    run.lastError = null;
+    refreshPanel(run, true);
+  } catch (error) {
+    if (error.deliveryResult?.channelError || error.deliveryResult?.dmError) {
+      run.waitingReason = 'Delivery failed; the account is saved in the retry queue.';
+      run.lastError = error.message;
+      console.error(`Auto-generation queued a delivery retry for guild ${run.guildId}:`, error.message);
+    } else {
+      run.lastError = error.message || 'Could not deliver the auto-generated account.';
+      console.error(`Auto-generation delivery failed for guild ${run.guildId}:`, error.message);
+    }
+    refreshPanel(run, true);
+  }
+}
+
 function refreshPanel(run, force = false) {
   if (!run.refresh || run.refreshing) return;
   if (!force && Date.now() - run.lastPanelRefreshAt < AUTO_PANEL_REFRESH_INTERVAL_MS) return;
@@ -238,9 +277,8 @@ function refreshPanel(run, force = false) {
 async function sendHealthAlert(client, run, reason) {
   if (run.lastAlertReason === reason) return;
   run.lastAlertReason = reason;
-  const channel = await client.channels.fetch(run.channelId).catch(() => null);
-  if (!channel?.isTextBased()) return;
-  await channel.send(`⚠️ **Auto-generation health alert:** ${reason}\nSelected types: ${run.types.join(', ')}`).catch(() => {});
+  console.warn(`Auto-generation health alert for guild ${run.guildId}: ${reason}`);
+  await updateHealthMessage(client, run.guildId);
 }
 
 async function generateNext(client, run) {
@@ -315,12 +353,21 @@ async function generateNext(client, run) {
       guildId: run.guildId,
       fallbackChannel: await client.channels.fetch(run.channelId).catch(() => null),
       preflight: { stock, limits },
+      deferAutomaticPasswordChange: true,
     });
     recordGeneration(run.guildId, type, 'generated');
     run.generatedCount++;
     run.generatedByType[type] = (run.generatedByType[type] ?? 0) + 1;
     run.lastType = type;
     run.lastGeneratedAt = Date.now();
+    if (payload.finalizedPromise) {
+      // Do not keep the generation lock while Roblox changes this account's
+      // password. The next account can generate and change independently.
+      void deliverDeferredGeneratedAccount(client, run, payload, user, type);
+      refreshPanel(run, true);
+      return;
+    }
+
     const delivery = await deliverGeneratedAccount(client, run, payload, user, type);
 
     run.lastError = null;

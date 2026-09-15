@@ -107,7 +107,13 @@ export async function deliverAccount({
         result.channelSent = true;
       } else {
         const channelPayload = account
-          ? buildAccountPayload(account, { ownerId, voice, includeCredentials: false, destination: `<#${channel.id}>` })
+            ? buildAccountPayload(account, {
+              ownerId,
+              guildId,
+              voice,
+              includeCredentials: false,
+              destination: `<#${channel.id}>`,
+            })
           : payload;
         const message = await channel.send(channelPayload);
         markDelivered(item);
@@ -140,7 +146,13 @@ export async function deliverAccount({
       };
       if (!isDelivered(item)) {
         const dmPayload = account
-          ? buildAccountPayload(account, { ownerId, voice, includeCredentials: true, destination: 'Private DM' })
+          ? buildAccountPayload(account, {
+            ownerId,
+            guildId,
+            voice,
+            includeCredentials: true,
+            destination: 'Private DM',
+          })
           : payload;
         const dmChannel = await user.createDM();
         const message = await dmChannel.send(dmPayload);

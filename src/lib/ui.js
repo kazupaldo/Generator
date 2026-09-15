@@ -4,8 +4,10 @@ import {
   AttachmentBuilder,
   ActionRowBuilder,
   StringSelectMenuBuilder,
+  ChannelSelectMenuBuilder,
   ButtonBuilder,
   ButtonStyle,
+  ChannelType,
 } from 'discord.js';
 import { ACCOUNT_TYPES } from '../bloxgen.js';
 import { COLORS } from '../config.js';
@@ -17,10 +19,24 @@ import {
 } from './auto-generation.js';
 import { getDailyStats } from './statistics.js';
 import { getPendingDeliveryCount } from './delivery-queue.js';
+import { getBotTitle, getDeliveryChannel, getHealthChannel, getNewPasswordChannel } from './settings.js';
+import { getHistoryCounts } from './account-history.js';
+import {
+  AUTO_PASSWORD_TYPES,
+  getAutoPasswordSummary,
+  getAutoPasswordTypeLabel,
+} from './auto-password.js';
 
 // Embed shown for a generated account. `voice` (optional) comes from the Roblox
 // voice settings API: { enabled, verified } or null if the lookup failed.
-export function buildAccountEmbed(acc, voice, { includeCredentials = false, destination = null } = {}) {
+export function buildAccountEmbed(acc, voice, {
+  guildId = null,
+  includeCredentials = false,
+  destination = null,
+  status = '✅ Account generated successfully. Combo is ready.',
+  title = null,
+  titleSuffix = null,
+} = {}) {
   const hasValue = (value) => {
     if (value === undefined || value === null || value === '') return false;
     return !['unknown', 'n/a', 'null', 'undefined'].includes(String(value).trim().toLowerCase());
@@ -39,17 +55,8 @@ export function buildAccountEmbed(acc, voice, { includeCredentials = false, dest
       .replaceAll('`', 'ˋ')
       .slice(0, 900);
   };
-  const inline = (value, fallback = '—') => `\`${show(value, fallback)}\``;
-  const copyBlock = (value) => {
-    const safeValue = String(value ?? '—')
-      .replaceAll('\r', ' ')
-      .replaceAll('\n', ' ')
-      .replaceAll('```', '` ` `')
-      .slice(0, 900);
-    return `\`\`\`text\n${safeValue}\n\`\`\``;
-  };
   const showBoolean = (value) => {
-    return value === true || value === 'true' ? 'Yes' : 'No';
+    return value === true || value === 'true' ? '✅ Yes' : '❌ No';
   };
   const formatDate = (value) => {
     const timestamp = Date.parse(value);
@@ -60,74 +67,47 @@ export function buildAccountEmbed(acc, voice, { includeCredentials = false, dest
   const displayName = valueOf('displayName', 'display_name') ?? acc.username;
   const createdAt = valueOf('accountCreatedAt', 'account_created_at', 'createdAt', 'created_at');
   const age = valueOf('estimated_age', 'estimatedAge');
-  const ageGroup = valueOf('estimated_age_group', 'estimatedAgeGroup');
-  const descriptionLines = [
-    `**Username:** ${includeCredentials ? 'See the copy-ready private fields below' : inline(acc.username)}`,
-    `**Password:** ${includeCredentials ? 'See the copy-ready private fields below' : '🔒 Hidden — use **Show login** to receive it privately'}`,
-  ];
-
-  if (hasValue(userId)) descriptionLines.push(`**User identifier:** ${inline(userId)}`);
-  if (hasValue(displayName)) descriptionLines.push(`**Display name:** ${inline(displayName)}`);
-  if (hasValue(createdAt)) descriptionLines.push(`**Account creation date:** ${formatDate(createdAt)}`);
-  if (hasValue(acc.region)) descriptionLines.push(`**Region:** ${show(acc.region)}`);
-  if (hasValue(acc.email_verified)) descriptionLines.push(`**Email verified:** ${showBoolean(acc.email_verified)}`);
-  if (hasValue(acc.age_verified)) descriptionLines.push(`**Age verified:** ${showBoolean(acc.age_verified)}`);
-  if (hasValue(age)) {
-    descriptionLines.push(
-      `**Estimated age:** ${show(age)}${hasValue(ageGroup) ? ` (${show(ageGroup)})` : ''}`,
-    );
-  }
-
-  if (acc.cost != null) descriptionLines.push(`**Cost:** ${show(`$${acc.cost}`)}`);
-  if (acc.robux != null) descriptionLines.push(`**Robux:** ${show(acc.robux)}`);
-  if (acc.rap != null) descriptionLines.push(`**RAP:** ${show(acc.rap)}`);
-  if (acc.summary != null) descriptionLines.push(`**Summary:** ${show(acc.summary)}`);
-  if (voice) {
-    descriptionLines.push(
-      `**Voice chat:** ${voice.enabled ? 'Enabled' : 'Disabled'}${voice.verified ? ' · verified' : ''}`,
-    );
-  }
-  if (hasValue(acc.passwordChangeStatus)) {
-    descriptionLines.push(`**Password automation:** ${show(acc.passwordChangeStatus)}`);
-  }
-
+  const inventory = valueOf('inventory', 'inventoryItems', 'inventory_items');
+  const combo = `${acc.username ?? '—'}:${acc.password ?? '—'}`;
+  const safeTitle = title || getBotTitle(guildId || acc.guildId);
+  const fullTitle = titleSuffix ? `${titleSuffix} ${safeTitle}` : safeTitle;
   const embed = new EmbedBuilder()
-    .setAuthor({ name: 'Kazu' })
-    .setTitle(`New ${acc.type || 'Roblox'} account`)
+    .setTitle(fullTitle)
     .setColor(COLORS.success)
-    .setDescription(descriptionLines.join('\n').slice(0, 4090))
-    .setFooter({ text: 'Contact - Generator' })
+    .setDescription(status)
     .setTimestamp();
   if (acc.avatarUrl) embed.setThumbnail(acc.avatarUrl);
-  if (includeCredentials) {
-    embed.addFields(
-      {
-        name: 'Username · tap and hold to copy',
-        value: copyBlock(acc.username),
-        inline: false,
-      },
-      {
-        name: 'Password · tap and hold to copy',
-        value: copyBlock(acc.password),
-        inline: false,
-      },
-    );
-  }
-  if (includeCredentials && acc.cookie) {
-    const cookie = String(acc.cookie);
-    const cookieValue = `\`\`\`\n${cookie}\n\`\`\``;
+  embed.addFields(
+    { name: '👤 Username', value: show(acc.username), inline: true },
+    { name: '🔑 Password', value: show(acc.password), inline: true },
+    { name: '🆔 User ID', value: show(userId), inline: true },
+    { name: '📛 Display Name', value: show(displayName), inline: true },
+    { name: '📅 Account Created', value: formatDate(createdAt), inline: true },
+    { name: '🌎 Region', value: show(acc.region), inline: true },
+    { name: '📧 Email Verified', value: hasValue(acc.email_verified) ? showBoolean(acc.email_verified) : '—', inline: true },
+    { name: '🔞 Age Verified', value: hasValue(acc.age_verified) ? showBoolean(acc.age_verified) : '—', inline: true },
+    { name: '🎂 Estimated Age', value: show(age), inline: true },
+    { name: '🎒 Inventory', value: show(
+      Array.isArray(inventory)
+        ? inventory.join(', ')
+        : inventory && typeof inventory === 'object' ? JSON.stringify(inventory) : inventory,
+    ), inline: false },
+    { name: '🔗 Combo', value: `\`${combo}\``, inline: false },
+  );
+  if (voice) {
     embed.addFields({
-      name: '.ROBLOSECURITY cookie',
-      value: cookieValue.length <= 1024
-        ? cookieValue
-        : 'The cookie is included in the attached private account file.',
+      name: '🎙️ Voice Chat',
+      value: voice.enabled ? `✅ Enabled${voice.verified ? ' · verified' : ''}` : '❌ Disabled',
+      inline: true,
     });
   }
-  if (!includeCredentials) {
-    embed.addFields({
-      name: 'Credential protection',
-      value: 'Password and cookie are hidden in public messages. Use **Show login** to receive credentials by DM.',
-    });
+  for (const [name, value] of [
+    ['💰 Cost', acc.cost == null ? null : `$${acc.cost}`],
+    ['💎 Robux', acc.robux],
+    ['📊 RAP', acc.rap],
+    ['📝 Summary', acc.summary],
+  ]) {
+    if (hasValue(value)) embed.addFields({ name, value: show(value), inline: true });
   }
   if (destination) {
     embed.addFields({ name: 'Destination', value: destination, inline: true });
@@ -149,14 +129,26 @@ export function buildAccountFile(acc) {
 
 export function buildAccountPayload(acc, {
   ownerId,
+  guildId = null,
   includeCredentials = false,
   voice = null,
   destination = null,
+  status,
+  title = null,
+  titleSuffix = null,
+  includeGenerateAgain = true,
 } = {}) {
   const file = includeCredentials ? buildAccountFile(acc) : null;
   return {
-    embeds: [buildAccountEmbed(acc, voice, { includeCredentials, destination })],
-    components: [accountActionsRow(acc.type, acc.username, ownerId)],
+    embeds: [buildAccountEmbed(acc, voice, {
+      includeCredentials,
+      destination,
+      status,
+      title,
+      titleSuffix,
+      guildId,
+    })],
+    components: [accountActionsRow(acc.type, acc.username, ownerId, { includeGenerateAgain })],
     ...(file ? { files: [file] } : {}),
   };
 }
@@ -172,13 +164,15 @@ export function generateAgainRow(type) {
   );
 }
 
-export function accountActionsRow(type, username, ownerId) {
+export function accountActionsRow(type, username, ownerId, { includeGenerateAgain = true } = {}) {
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`gen-again:${type}`)
-      .setLabel('Generate again')
-      .setEmoji('🔄')
-      .setStyle(ButtonStyle.Secondary),
+    ...(includeGenerateAgain ? [
+      new ButtonBuilder()
+        .setCustomId(`gen-again:${type}`)
+        .setLabel('Generate again')
+        .setEmoji('🔄')
+        .setStyle(ButtonStyle.Secondary),
+    ] : []),
   );
 
   if (username && ownerId) {
@@ -190,6 +184,15 @@ export function accountActionsRow(type, username, ownerId) {
         .setStyle(ButtonStyle.Primary),
     );
     row.addComponents(passwordChangeButton(username, ownerId));
+  }
+  if (username) {
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`copy-combo:${encodeURIComponent(username)}`)
+        .setLabel('Copy Combo')
+        .setEmoji('📋')
+        .setStyle(ButtonStyle.Success),
+    );
   }
   return row;
 }
@@ -206,6 +209,30 @@ export function passwordChangeRow(username, ownerId) {
   return new ActionRowBuilder().addComponents(passwordChangeButton(username, ownerId));
 }
 
+export function buildPasswordProcessingPayload(username, guildId) {
+  const embed = new EmbedBuilder()
+    .setTitle(`🔐 ${getBotTitle(guildId)} — Changing Password`)
+    .setColor(COLORS.brand)
+    .setDescription('🔄 Changing Password')
+    .addFields(
+      { name: 'Username', value: `\`${username}\``, inline: true },
+      { name: 'Status', value: 'Processing...', inline: true },
+    );
+  return { embeds: [embed] };
+}
+
+export function buildPasswordChangePayload(account, { ownerId, guildId, destination = null } = {}) {
+  return buildAccountPayload(account, {
+    ownerId,
+    guildId,
+    destination,
+    title: `${getBotTitle(guildId)} — Password Changed`,
+    titleSuffix: '🔐',
+    status: '✅ Password changed successfully. Combo is ready.',
+    includeGenerateAgain: false,
+  });
+}
+
 // The dropdown panel to pick an account type.
 export function buildPanel() {
   const embed = new EmbedBuilder()
@@ -219,6 +246,206 @@ export function buildPanel() {
     .addOptions(ACCOUNT_TYPES.map((t) => ({ label: t, value: t })));
 
   return { embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)] };
+}
+
+export function buildSettingsPanel(guildId) {
+  const counts = getHistoryCounts();
+  const autoSummary = getAutoPasswordSummary(guildId);
+  const embed = new EmbedBuilder()
+    .setTitle('⚙️ Kazu Bot Settings')
+    .setColor(COLORS.brand)
+    .addFields(
+      { name: 'Title', value: getBotTitle(guildId), inline: false },
+      { name: 'Generator Channel', value: getDeliveryChannel(guildId) ? `<#${getDeliveryChannel(guildId)}>` : 'DM / not set', inline: true },
+      { name: 'New Password Channel', value: getNewPasswordChannel(guildId) ? `<#${getNewPasswordChannel(guildId)}>` : 'Not set', inline: true },
+      { name: 'Health Channel', value: getHealthChannel(guildId) ? `<#${getHealthChannel(guildId)}>` : 'Not set', inline: true },
+      { name: 'Generated', value: String(autoSummary.totals.generated || counts.generated), inline: true },
+      { name: 'Changed', value: String(autoSummary.totals.changed || counts.changed), inline: true },
+      { name: 'Failed', value: String(autoSummary.totals.failed), inline: true },
+      { name: 'Unknown', value: String(autoSummary.totals.unknown), inline: true },
+    );
+
+  const select = (customId, placeholder) => new ActionRowBuilder().addComponents(
+    new ChannelSelectMenuBuilder()
+      .setCustomId(customId)
+      .setPlaceholder(placeholder)
+      .setChannelTypes(ChannelType.GuildText)
+      .setMinValues(1)
+      .setMaxValues(1),
+  );
+  const actions = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('settings-title')
+      .setLabel('Change Title')
+      .setEmoji('✏️')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId('settings-export-generated')
+      .setLabel('Export Generated')
+      .setEmoji('📦')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId('settings-export-changed')
+      .setLabel('Export New Passwords')
+      .setEmoji('🔐')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId('settings-clear-history')
+      .setLabel('Clear History')
+      .setEmoji('🗑️')
+      .setStyle(ButtonStyle.Danger),
+  );
+  return {
+    embeds: [embed],
+    components: [
+      select('settings-generator-channel', 'Change Generator Channel'),
+      select('settings-password-channel', 'Change Password Channel'),
+      select('settings-health-channel', 'Change Health Channel'),
+      actions,
+    ],
+  };
+}
+
+function autoPasswordChannelLines(summary) {
+  if (!summary.channels.length) return 'No Auto Password channels enabled.';
+  return summary.channels.map((channel) => {
+    const state = channel.paused ? '⏸️ Paused' : '🟢 Enabled';
+    const counts = channel.counters;
+    return `<#${channel.channelId}>\n${state} | ${channel.typeLabel}\n` +
+      `Generated: ${counts.generated} | Changed: ${counts.changed}\n` +
+      `Failed: ${counts.failed} | Unknown: ${counts.unknown}`;
+  }).join('\n\n').slice(0, 3900);
+}
+
+export function buildAutoPasswordPanel(guildId) {
+  const summary = getAutoPasswordSummary(guildId);
+  const embed = new EmbedBuilder()
+    .setTitle('🤖 Kazu Bot — Auto Password')
+    .setColor(summary.channels.length ? COLORS.success : COLORS.brand)
+    .addFields(
+      { name: '📊 Channels', value: autoPasswordChannelLines(summary), inline: false },
+      {
+        name: '━━━━━━━━━━━━━━',
+        value: `Total Generated: ${summary.totals.generated}\n` +
+          `Total Changed: ${summary.totals.changed}\n` +
+          `Total Failed: ${summary.totals.failed}\n` +
+          `Total Unknown: ${summary.totals.unknown}`,
+        inline: false,
+      },
+    );
+  return {
+    embeds: [embed],
+    components: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('autopass-enable')
+          .setLabel('Enable')
+          .setEmoji('➕')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId('autopass-manage')
+          .setLabel('Manage')
+          .setEmoji('⚙️')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('autopass-refresh')
+          .setLabel('Refresh')
+          .setEmoji('🔄')
+          .setStyle(ButtonStyle.Primary),
+      ),
+    ],
+  };
+}
+
+export function buildAutoPasswordEnablePanel(channelId = null, mode = 'enable') {
+  const typeMenu = new StringSelectMenuBuilder()
+    .setCustomId(`${mode === 'edit' ? 'autopass-edit-type' : 'autopass-enable-type'}:${channelId || 'none'}`)
+    .setPlaceholder(channelId ? 'Select account type…' : 'Select a channel first')
+    .setMinValues(1)
+    .setMaxValues(1)
+    .setDisabled(!channelId)
+    .addOptions(AUTO_PASSWORD_TYPES.map((item) => ({
+      label: item.label,
+      value: item.id,
+    })));
+  return {
+    embeds: [
+      new EmbedBuilder()
+        .setTitle('🤖 Kazu Bot — Enable Auto Password')
+        .setColor(COLORS.brand)
+        .setDescription(channelId
+          ? `Channel: <#${channelId}>\nChoose the exact account type to route here.`
+          : 'Select the input channel first. Credentials are deleted after validation.'),
+    ],
+    components: [
+      ...(mode === 'edit' ? [] : [new ActionRowBuilder().addComponents(
+        new ChannelSelectMenuBuilder()
+          .setCustomId('autopass-enable-channel')
+          .setPlaceholder('Select Auto Password input channel')
+          .setChannelTypes(ChannelType.GuildText)
+          .setMinValues(1)
+          .setMaxValues(1),
+      )]),
+      new ActionRowBuilder().addComponents(typeMenu),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('autopass-back')
+          .setLabel('Back')
+          .setStyle(ButtonStyle.Secondary),
+      ),
+    ],
+  };
+}
+
+export function buildAutoPasswordManagePanel(guildId) {
+  const summary = getAutoPasswordSummary(guildId);
+  const embed = new EmbedBuilder()
+    .setTitle('🤖 Kazu Bot — Manage Auto Password')
+    .setColor(COLORS.brand)
+    .setDescription(summary.channels.length
+      ? 'Each row changes only its own channel. Queued work remains saved while paused.'
+      : 'No Auto Password channels are enabled.')
+    .addFields({
+      name: 'Totals',
+      value: `Generated ${summary.totals.generated} · Changed ${summary.totals.changed} · ` +
+        `Failed ${summary.totals.failed} · Unknown ${summary.totals.unknown}`,
+    });
+  const rows = summary.channels.slice(0, 4).map((channel) =>
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`${channel.paused ? 'autopass-resume' : 'autopass-pause'}:${channel.channelId}`)
+        .setLabel(channel.paused ? 'Resume' : 'Pause')
+        .setEmoji(channel.paused ? '▶️' : '⏸️')
+        .setStyle(channel.paused ? ButtonStyle.Success : ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(`autopass-edit:${channel.channelId}`)
+        .setLabel('Edit')
+        .setEmoji('⚙️')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(`autopass-remove:${channel.channelId}`)
+        .setLabel('Remove')
+        .setEmoji('🗑️')
+        .setStyle(ButtonStyle.Danger),
+      new ButtonBuilder()
+        .setCustomId(`autopass-export:${channel.channelId}`)
+        .setLabel('Export')
+        .setEmoji('📄')
+        .setStyle(ButtonStyle.Primary),
+    ),
+  );
+  rows.push(new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('autopass-channels')
+      .setLabel('Channels')
+      .setEmoji('⚙️')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId('autopass-back')
+      .setLabel('Back')
+      .setStyle(ButtonStyle.Secondary),
+  ));
+  return { embeds: [embed], components: rows };
 }
 
 function formatDuration(ms) {

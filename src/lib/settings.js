@@ -109,3 +109,38 @@ export function getLogChannel(guildId) {
 export function setLogChannel(guildId, channelId) {
   update(guildId, { logChannel: channelId ?? null });
 }
+
+export function getBotTitle(guildId) {
+  return cache[guildId]?.botTitle || '🤖 Kazu Bot';
+}
+
+export function setBotTitle(guildId, title) {
+  const value = String(title ?? '').trim().slice(0, 80);
+  return update(guildId, { botTitle: value || '🤖 Kazu Bot' });
+}
+
+export function getNewPasswordChannel(guildId) {
+  return cache[guildId]?.newPasswordChannelId ??
+    cache[guildId]?.autoPassword?.channelId ??
+    null;
+}
+
+export function setNewPasswordChannel(guildId, channelId) {
+  return update(guildId, { newPasswordChannelId: channelId ?? null });
+}
+
+export function getHealthChannel(guildId) {
+  return cache[guildId]?.healthChannelId ?? null;
+}
+
+export function setHealthChannel(guildId, channelId) {
+  return update(guildId, { healthChannelId: channelId ?? null, healthMessageId: null });
+}
+
+export function getHealthMessage(guildId) {
+  return cache[guildId]?.healthMessageId ?? null;
+}
+
+export function setHealthMessage(guildId, messageId) {
+  return update(guildId, { healthMessageId: messageId ?? null });
+}
