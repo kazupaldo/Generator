@@ -1,31 +1,70 @@
 // Lightweight calls to official Roblox web APIs using an account's own cookie.
 
 const AUTH_URL = 'https://auth.roblox.com';
+const REQUEST_TIMEOUT_MS = 15_000;
+const USER_AGENT = 'KazuBot/1.2 (authorized account management)';
 
 function cookieHeader(cookie) {
-  return `.ROBLOSECURITY=${cookie}`;
+  let value = String(cookie ?? '').trim();
+  if (/^\.ROBLOSECURITY=/i.test(value)) value = value.slice(value.indexOf('=') + 1);
+  value = value.split(';', 1)[0].trim();
+  return `.ROBLOSECURITY=${value}`;
 }
 
-async function readError(res) {
+function requestHeaders(cookie, extra = {}) {
+  return {
+    Cookie: cookieHeader(cookie),
+    Accept: 'application/json',
+    'User-Agent': USER_AGENT,
+    ...extra,
+  };
+}
+
+async function fetchWithTimeout(url, options = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const data = await res.json();
-    return data?.errors?.[0]?.message || data?.message || `Roblox API error (HTTP ${res.status})`;
-  } catch {
-    return `Roblox API error (HTTP ${res.status})`;
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error('Roblox API request timed out.');
+    throw new Error(`Roblox API request failed: ${error.message}`);
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
-// Roblox requires a CSRF token for authenticated state-changing requests.
+async function readResponse(res) {
+  const text = await res.text();
+  if (!text) return { text: '', data: null };
+  try {
+    return { text, data: JSON.parse(text) };
+  } catch {
+    return { text, data: null };
+  }
+}
+
+function errorFromResponse(res, body, fallback = `Roblox API error (HTTP ${res.status})`) {
+  const apiError = body?.data?.errors?.[0];
+  const message = apiError?.message
+    || body?.data?.message
+    || body?.data?.error
+    || body?.text?.slice(0, 300)
+    || fallback;
+  const suffix = res.status === 429 ? ' Roblox rate limit reached; wait and try again.' : '';
+  return new Error(`${message}${suffix}`);
+}
+
+// Roblox commonly returns 403 for the token bootstrap request. The important
+// signal is the x-csrf-token header, not the status code.
 async function getCsrfToken(cookie) {
-  const res = await fetch(`${AUTH_URL}/v2/logout`, {
+  const res = await fetchWithTimeout(`${AUTH_URL}/v2/logout`, {
     method: 'POST',
-    headers: { Cookie: cookieHeader(cookie) },
+    headers: requestHeaders(cookie),
   });
   const token = res.headers.get('x-csrf-token');
-  if (!token) {
-    throw new Error(res.ok ? 'Roblox did not provide a CSRF token.' : await readError(res));
-  }
-  return token;
+  if (token) return token;
+  const body = await readResponse(res);
+  throw errorFromResponse(res, body, 'Roblox did not provide a CSRF token.');
 }
 
 export async function changePassword({ cookie, currentPassword, newPassword }) {
@@ -33,31 +72,37 @@ export async function changePassword({ cookie, currentPassword, newPassword }) {
   if (!currentPassword) throw new Error('Enter the current password.');
   if (!newPassword) throw new Error('Enter a new password.');
 
-  const csrfToken = await getCsrfToken(cookie);
-  const res = await fetch(`${AUTH_URL}/v2/user/passwords/change`, {
-    method: 'POST',
-    headers: {
-      Cookie: cookieHeader(cookie),
-      'Content-Type': 'application/json',
-      'X-CSRF-TOKEN': csrfToken,
-    },
-    body: JSON.stringify({ currentPassword, newPassword }),
-  });
+  let csrfToken = await getCsrfToken(cookie);
+  let res;
+  let body;
 
-  if (!res.ok) throw new Error(await readError(res));
-  // Some Roblox responses are HTTP 200 even when the JSON body contains an
-  // application-level error. Treat that as a failed mutation.
-  try {
-    const data = await res.clone().json();
-    if (Array.isArray(data?.errors) && data.errors.length) {
-      throw new Error(data.errors[0]?.message || 'Roblox rejected the password change.');
+  for (let attempt = 0; attempt < 2; attempt++) {
+    res = await fetchWithTimeout(`${AUTH_URL}/v2/user/passwords/change`, {
+      method: 'POST',
+      headers: requestHeaders(cookie, {
+        'Content-Type': 'application/json',
+        'X-CSRF-TOKEN': csrfToken,
+        Origin: 'https://www.roblox.com',
+        Referer: 'https://www.roblox.com/',
+      }),
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+
+    const refreshedToken = res.headers.get('x-csrf-token');
+    if (res.status === 403 && refreshedToken && refreshedToken !== csrfToken) {
+      csrfToken = refreshedToken;
+      continue;
     }
-    if (data?.success === false) {
-      throw new Error(data.message || 'Roblox rejected the password change.');
-    }
-  } catch (error) {
-    if (error.message?.includes('Roblox rejected')) throw error;
-    // Empty response bodies are valid for this endpoint.
+    body = await readResponse(res);
+    break;
+  }
+
+  if (!res?.ok) throw errorFromResponse(res, body);
+  if (Array.isArray(body?.data?.errors) && body.data.errors.length) {
+    throw new Error(body.data.errors[0]?.message || 'Roblox rejected the password change.');
+  }
+  if (body?.data?.success === false) {
+    throw new Error(body.data.message || 'Roblox rejected the password change.');
   }
   return { confirmed: true };
 }
@@ -67,8 +112,8 @@ export async function changePassword({ cookie, currentPassword, newPassword }) {
 export async function verifyPasswordChange(cookie) {
   if (!cookie) return false;
   try {
-    const res = await fetch('https://users.roblox.com/v1/users/authenticated', {
-      headers: { Cookie: cookieHeader(cookie) },
+    const res = await fetchWithTimeout('https://users.roblox.com/v1/users/authenticated', {
+      headers: requestHeaders(cookie),
     });
     return res.ok;
   } catch {
@@ -80,8 +125,8 @@ export async function verifyPasswordChange(cookie) {
 // Returns { enabled, verified, eligible } or null if the call fails.
 export async function checkVoiceChat(cookie) {
   try {
-    const res = await fetch('https://voice.roblox.com/v1/settings', {
-      headers: { Cookie: `.ROBLOSECURITY=${cookie}` },
+    const res = await fetchWithTimeout('https://voice.roblox.com/v1/settings', {
+      headers: requestHeaders(cookie),
     });
     if (!res.ok) return null;
     const data = await res.json();

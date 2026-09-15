@@ -1,6 +1,7 @@
 import { PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
 import { ACCOUNT_TYPES } from './bloxgen.js';
 import { commandList } from './commands/index.js';
+import { PASSWORD_CHANGE_TYPES } from './lib/password-changer.js';
 
 const descriptions = {
   generate: 'Generate a Roblox account',
@@ -19,6 +20,8 @@ const descriptions = {
   secure: 'Open a private password security action',
   key: 'Add or manage your personal BloxGen API keys',
   autopassword: 'Configure automatic password changes for generated accounts',
+  passwordchanger: 'Change passwords for bot-issued accounts',
+  'password-change': 'Change passwords for bot-issued accounts',
 };
 
 function base(name) {
@@ -152,6 +155,8 @@ function buildCommand(name) {
       break;
     case 'autogen':
     case 'autopassword':
+    case 'passwordchanger':
+    case 'password-change':
     case 'secure':
       if (name === 'autopassword') {
         command
@@ -196,6 +201,25 @@ function buildCommand(name) {
               .addChoices(...ACCOUNT_TYPES.map((type) => ({ name: type, value: type }))),
           );
       }
+      if (['passwordchanger', 'password-change'].includes(name)) {
+        command
+          .addStringOption((option) =>
+            option
+              .setName('accounts')
+              .setDescription('Generated usernames, separated by spaces or commas (max 10)')
+              .setRequired(false),
+          )
+          .addStringOption((option) =>
+            option
+              .setName('type')
+              .setDescription('Process bot-issued accounts of one type (max 10)')
+              .setRequired(false)
+              .addChoices(...PASSWORD_CHANGE_TYPES.map((type) => ({
+                name: type.label,
+                value: type.id,
+              }))),
+          );
+      }
       break;
     case 'panel':
     case 'key':
@@ -210,7 +234,7 @@ function buildCommand(name) {
       throw new Error(`No slash command definition for ${name}`);
   }
 
-  if (['settings', 'logs', 'autogen', 'autopassword'].includes(name)) {
+  if (['settings', 'logs', 'autogen', 'autopassword', 'passwordchanger', 'password-change'].includes(name)) {
     command.setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild);
   }
   return command;
@@ -218,7 +242,40 @@ function buildCommand(name) {
 
 // Only primary command names are registered. Prefix aliases remain available
 // for backwards compatibility, while slash commands stay easy to discover.
-export const slashCommands = commandList.map((command) => buildCommand(command.name));
+function buildPasswordCommandGroup() {
+  return new SlashCommandBuilder()
+    .setName('password')
+    .setDescription('Password management tools')
+    .setDMPermission(false)
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName('changer')
+        .setDescription('Change passwords for bot-issued accounts')
+        .addStringOption((option) =>
+          option
+            .setName('accounts')
+            .setDescription('Generated usernames, separated by spaces or commas (max 10)')
+            .setRequired(false),
+        )
+        .addStringOption((option) =>
+          option
+            .setName('type')
+            .setDescription('Process bot-issued accounts of one type (max 10)')
+            .setRequired(false)
+            .addChoices(...PASSWORD_CHANGE_TYPES.map((type) => ({
+              name: type.label,
+              value: type.id,
+            }))),
+        ),
+    );
+}
+
+export const slashCommands = [
+  ...commandList.map((command) => buildCommand(command.name)),
+  buildCommand('password-change'),
+  buildPasswordCommandGroup(),
+];
 
 export async function registerSlashCommands(client, guild) {
   await guild.commands.set(slashCommands.map((command) => command.toJSON()));
